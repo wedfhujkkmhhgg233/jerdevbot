@@ -11,7 +11,7 @@ const config = {
   host: process.env.MC_HOST || 'TheHulagens.aternos.me',
   port: parseInt(process.env.MC_PORT) || 40436,
   username: process.env.MC_USERNAME || 'emeraldgod3v',
-  offline: false,
+  offline: true,
   profilesFolder: './auth',
   afkMode: process.env.AFK_MODE || 'passive',
   afkMessage: process.env.AFK_MESSAGE || 'I am AFK',
