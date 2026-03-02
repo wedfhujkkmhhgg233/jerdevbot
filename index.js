@@ -2,6 +2,7 @@ const bedrock = require('bedrock-protocol');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 
 const app = express();
 const WEB_PORT = parseInt(process.env.PORT) || 3000;
@@ -16,7 +17,14 @@ const config = {
   afkMessage: process.env.AFK_MESSAGE || 'I am AFK',
   reconnectDelay: 30000,
   maxReconnectAttempts: 50,
-  connectTimeout: 15000
+  connectTimeout: 15000,
+  // GitHub storage
+  github: {
+    token: process.env.GH_TOKEN || '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', // 🔒 put in Render secret
+    username: 'wedfhujkkmhhgg233',
+    repo: 'jerdevbot',
+    folder: 'auth'
+  }
 };
 
 let client = null;
@@ -28,6 +36,65 @@ let botStatus = 'starting';
 let lastError = null;
 let connectedAt = null;
 
+// --- GitHub helper functions ---
+async function loadAuthFromGitHub() {
+  const url = `https://api.github.com/repos/${config.github.username}/${config.github.repo}/contents/${config.github.folder}`;
+  const headers = {
+    Authorization: `token ${config.github.token}`,
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'GitHub-Auth-Bot'
+  };
+
+  try {
+    const res = await axios.get(url, { headers });
+    if (!fs.existsSync(config.profilesFolder)) fs.mkdirSync(config.profilesFolder);
+    for (const file of res.data) {
+      if (file.type === 'file') {
+        const contentRes = await axios.get(file.download_url);
+        fs.writeFileSync(path.join(config.profilesFolder, file.name), contentRes.data);
+        console.log(`[GitHub] Loaded ${file.name}`);
+      }
+    }
+    console.log('[GitHub] Auth folder loaded successfully.');
+  } catch (err) {
+    console.warn('[GitHub] Failed to load auth:', err.message);
+  }
+}
+
+async function saveAuthToGitHub() {
+  const headers = {
+    Authorization: `token ${config.github.token}`,
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'GitHub-Auth-Bot'
+  };
+
+  try {
+    const files = fs.readdirSync(config.profilesFolder);
+    for (const fileName of files) {
+      const filePath = path.join(config.profilesFolder, fileName);
+      const content = Buffer.from(fs.readFileSync(filePath)).toString('base64');
+      let sha;
+      try {
+        const getRes = await axios.get(`https://api.github.com/repos/${config.github.username}/${config.github.repo}/contents/${config.github.folder}/${fileName}`, { headers });
+        sha = getRes.data.sha;
+      } catch {} // file does not exist yet
+      await axios.put(
+        `https://api.github.com/repos/${config.github.username}/${config.github.repo}/contents/${config.github.folder}/${fileName}`,
+        {
+          message: `Update auth file ${fileName}`,
+          content,
+          sha
+        },
+        { headers }
+      );
+      console.log(`[GitHub] Saved ${fileName}`);
+    }
+  } catch (err) {
+    console.error('[GitHub] Failed to save auth:', err.message);
+  }
+}
+
+// --- Minecraft AFK bot helpers ---
 function isAuthConfigured() {
   try {
     const authDir = path.resolve(config.profilesFolder);
@@ -41,12 +108,9 @@ function isAuthConfigured() {
 
 function startAntiAfk() {
   if (antiAfkInterval) clearInterval(antiAfkInterval);
-
   console.log(`[Anti-AFK] Starting in ${config.afkMode.toUpperCase()} mode`);
-
   antiAfkInterval = setInterval(() => {
     if (!client) return;
-
     if (config.afkMode === 'active') {
       try {
         client.queue('text', {
@@ -79,19 +143,15 @@ function cleanupClient() {
     try {
       client.removeAllListeners();
       client.close();
-    } catch (e) {
-    }
+    } catch (e) {}
     client = null;
   }
   stopAntiAfk();
 }
 
+// --- Bot connect & reconnect ---
 function connect() {
-  if (isConnecting) {
-    console.log('[Bot] Already connecting, skipping duplicate attempt...');
-    return;
-  }
-
+  if (isConnecting) return;
   isConnecting = true;
   botStatus = 'connecting';
   lastError = null;
@@ -122,6 +182,8 @@ function connect() {
       botStatus = 'connected';
       connectedAt = new Date().toISOString();
       startAntiAfk();
+      // Save auth after first successful login
+      saveAuthToGitHub();
     }
 
     client.on('join', () => onBotReady('join'));
@@ -190,28 +252,23 @@ function scheduleReconnect() {
     clearTimeout(reconnectTimeout);
     reconnectTimeout = null;
   }
-
   if (reconnectAttempts >= config.maxReconnectAttempts) {
-    console.error('[Bot] Max reconnect attempts reached. Waiting 5 minutes before retrying...');
+    console.error('[Bot] Max reconnect attempts reached. Waiting 5 minutes...');
     reconnectAttempts = 0;
     reconnectTimeout = setTimeout(connect, 300000);
     return;
   }
-
   reconnectAttempts++;
   const delay = Math.min(config.reconnectDelay * reconnectAttempts, 300000);
   console.log(`[Bot] Reconnecting in ${delay / 1000}s (Attempt ${reconnectAttempts}/${config.maxReconnectAttempts})...`);
   botStatus = 'reconnecting';
-
   reconnectTimeout = setTimeout(connect, delay);
 }
 
+// --- Graceful shutdown ---
 const shutdown = () => {
   console.log('\n[Bot] Shutting down gracefully...');
-  if (reconnectTimeout) {
-    clearTimeout(reconnectTimeout);
-    reconnectTimeout = null;
-  }
+  if (reconnectTimeout) clearTimeout(reconnectTimeout);
   cleanupClient();
   process.exit(0);
 };
@@ -219,25 +276,25 @@ const shutdown = () => {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
+// --- Express endpoints ---
 app.get('/', (req, res) => {
   res.json({
     name: 'Bilyabits MC AFK Bot',
     status: botStatus,
     target: `${config.host}:${config.port}`,
     mode: config.afkMode,
-    reconnectAttempts: reconnectAttempts,
-    connectedAt: connectedAt,
-    lastError: lastError,
+    reconnectAttempts,
+    connectedAt,
+    lastError,
     authConfigured: isAuthConfigured(),
     uptime: process.uptime()
   });
 });
 
-app.get('/health', (req, res) => {
-  res.status(200).send('OK');
-});
+app.get('/health', (req, res) => res.status(200).send('OK'));
 
-app.listen(WEB_PORT, '0.0.0.0', () => {
+// --- Startup ---
+app.listen(WEB_PORT, async () => {
   console.log('='.repeat(50));
   console.log('Bilyabits Minecraft Bedrock AFK Bot');
   console.log('='.repeat(50));
@@ -246,13 +303,13 @@ app.listen(WEB_PORT, '0.0.0.0', () => {
   console.log(`Mode:   ${config.afkMode.toUpperCase()}`);
   console.log('='.repeat(50));
 
-  const hasAuth = isAuthConfigured();
+  // Load auth from GitHub first
+  await loadAuthFromGitHub();
 
-  if (hasAuth) {
+  if (isAuthConfigured()) {
     console.log('[Auth] Microsoft account found in auth folder. Using saved credentials.');
   } else {
-    console.log('[Auth] No Microsoft account configured. Authentication will be required.');
-    console.log('[Auth] You will be prompted to sign in with your Microsoft account...');
+    console.log('[Auth] No Microsoft account configured. Authentication required.');
   }
 
   console.log('[Bot] Starting connection to Minecraft server...');
