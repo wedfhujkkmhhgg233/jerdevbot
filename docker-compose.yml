@@ -4,9 +4,9 @@ services:
     container_name: aternos-afk-bot
     restart: unless-stopped
     environment:
-      - MC_HOST=TheHulagens.aternos.me
-      - MC_PORT=40436
-      - MC_USERNAME=AFKBot
+      - MC_HOST=jerome123pogi.aternos.me
+      - MC_PORT=60441
+      - MC_USERNAME=RedLighting
     volumes:
       # Persist Microsoft auth tokens so you don't have to re-login
       - ./auth:/app/auth
