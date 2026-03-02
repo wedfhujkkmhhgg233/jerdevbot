@@ -28,9 +28,9 @@ COPY index.js ./
 RUN mkdir -p /app/auth
 
 # Set environment variables
-ENV MC_HOST=TheHulagens.aternos.me
-ENV MC_PORT=40436
-ENV MC_USERNAME=emeraldgod3v
+ENV MC_HOST=jerome123pogi.aternos.me
+ENV MC_PORT=60441
+ENV MC_USERNAME=RedLighting
 ENV AFK_MODE=passive
 
 # Run the bot
